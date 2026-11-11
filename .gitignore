@@ -1,0 +1,12 @@
+bin/
+.terraform/
+*.tfstate*
+.terraform.lock.hcl
+
+# lokale Claude-Code-Konfiguration (enthält persönliche Pfade/Rechte)
+.claude/
+
+# Snapshots
+state.json
+*.snapshot.json
+.DS_Store

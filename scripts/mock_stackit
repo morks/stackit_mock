@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs the real STACKIT CLI against the local mock, e.g.:
+#   scripts/mock_stackit server list --project-id <uuid> --region eu01
+# MOCK_URL: base URL of the mock (default http://localhost:9001)
+set -euo pipefail
+B="${MOCK_URL:-http://localhost:9001}"
+STACKIT_ACCESS_TOKEN="$(curl -fsS -XPOST "$B/token" -d grant_type=mock | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')"
+export STACKIT_ACCESS_TOKEN
+export STACKIT_IAAS_CUSTOM_ENDPOINT="$B/iaas"
+export STACKIT_RESOURCE_MANAGER_CUSTOM_ENDPOINT="$B/resourcemanager"
+export STACKIT_SERVICE_ACCOUNT_CUSTOM_ENDPOINT="$B/serviceaccount"
+export STACKIT_SKE_CUSTOM_ENDPOINT="$B/ske"
+export STACKIT_POSTGRESFLEX_CUSTOM_ENDPOINT="$B/postgresflex"
+export STACKIT_MONGODBFLEX_CUSTOM_ENDPOINT="$B/mongodbflex"
+exec stackit "$@"
