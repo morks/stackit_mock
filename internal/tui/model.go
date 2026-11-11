@@ -89,7 +89,7 @@ func (m Model) reset() tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.Post(m.base+"/reset", "application/json", nil)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return resetMsg{err}
 	}

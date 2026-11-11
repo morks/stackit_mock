@@ -2,7 +2,7 @@
 package iaas
 
 import (
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 -- only a fake key fingerprint, not a security feature
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -263,7 +263,7 @@ func (x *h) define() {
 	x.ips = base("iaas/public-ip", "public IP", "publicIpId")
 	x.ips.NameKey = "ip"
 	x.ips.Prepare = func(r *http.Request, s crud.Scope, b map[string]any) error {
-		b["ip"] = fmt.Sprintf("193.148.%d.%d", 160+rand.IntN(32), 1+rand.IntN(253))
+		b["ip"] = fmt.Sprintf("193.148.%d.%d", 160+rand.IntN(32), 1+rand.IntN(253)) // #nosec G404 -- fake IP for the mock
 		b["networkInterface"] = nil
 		return nil
 	}
@@ -285,7 +285,7 @@ func (x *h) define() {
 		if httpx.Str(b, "name") == "" {
 			b["name"] = "keypair-" + crud.Rand(6)
 		}
-		sum := md5.Sum([]byte(pk))
+		sum := md5.Sum([]byte(pk)) // #nosec G401 -- fake fingerprint, not a security feature
 		hx := hex.EncodeToString(sum[:])
 		var parts []string
 		for i := 0; i < len(hx); i += 2 {
@@ -424,7 +424,7 @@ var nicIP atomic.Int32
 
 func fillNic(b map[string]any, net store.Resource) {
 	b["networkId"] = net.ID
-	b["mac"] = fmt.Sprintf("fa:16:3e:%02x:%02x:%02x", rand.IntN(256), rand.IntN(256), rand.IntN(256))
+	b["mac"] = fmt.Sprintf("fa:16:3e:%02x:%02x:%02x", rand.IntN(256), rand.IntN(256), rand.IntN(256)) // #nosec G404 -- fake MAC for the mock
 	b["type"] = "server"
 	if _, ok := b["nicSecurity"]; !ok {
 		b["nicSecurity"] = true

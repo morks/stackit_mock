@@ -137,6 +137,8 @@ Geprüft ist `network list` mit Daten; die übrigen `list`-Befehle laufen gegen 
 
 ## Entwicklung
 
+CI (`.github/workflows`): Build/Test/`gofmt`/`go vet`, `govulncheck`, `gosec`, CodeQL, Dependency Review (PRs) und Dependabot – bei jedem Push/PR und wöchentlich. Siehe `SECURITY.md`.
+
 ```bash
 go build ./... && go vet ./... && gofmt -l .
 go test -race ./...

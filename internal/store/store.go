@@ -189,11 +189,11 @@ func (s *Store) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -201,7 +201,7 @@ func (s *Store) Save(path string) error {
 
 // Load restores a snapshot; a missing file is not an error.
 func (s *Store) Load(path string) error {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- path comes from the operator (-snapshot flag)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

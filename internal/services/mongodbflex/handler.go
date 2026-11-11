@@ -125,7 +125,7 @@ func Register(mux *http.ServeMux, d *httpx.Deps) {
 					opts[k] = fmt.Sprint(int64(v))
 				}
 				var n int64
-				fmt.Sscan(fmt.Sprint(opts[k]), &n)
+				_, _ = fmt.Sscan(fmt.Sprint(opts[k]), &n)
 				resp[k] = n
 			}
 		})

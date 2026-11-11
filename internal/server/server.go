@@ -53,7 +53,7 @@ func chain(next http.Handler, fs *faults.Set, opt Options) http.Handler {
 				httpx.WriteError(sw, 500, "internal mock error")
 			}
 			if !opt.Quiet {
-				log.Printf("%s %s -> %d (%s)", r.Method, r.URL.RequestURI(), sw.code, time.Since(start).Round(time.Millisecond))
+				log.Printf("%q %q -> %d (%s)", r.Method, r.URL.RequestURI(), sw.code, time.Since(start).Round(time.Millisecond)) // #nosec G706 -- values are %q-quoted
 			}
 		}()
 		isAdmin := strings.HasPrefix(r.URL.Path, admin.Prefix) || r.URL.Path == "/healthz"

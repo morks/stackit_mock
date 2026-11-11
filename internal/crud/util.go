@@ -7,7 +7,7 @@ import (
 )
 
 // NumID returns a random positive int64-sized id (Postgres Flex users/databases).
-func NumID() int64 { return 1_000_000_000 + rand.Int64N(8_000_000_000) }
+func NumID() int64 { return 1_000_000_000 + rand.Int64N(8_000_000_000) } // #nosec G404 -- mock ids, not secrets
 
 // KeyString renders an id value (string or JSON number) as the store key.
 func KeyString(v any) string {
@@ -55,7 +55,7 @@ func Rand(n int) string {
 	const h = "0123456789abcdef"
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = h[rand.IntN(16)]
+		b[i] = h[rand.IntN(16)] // #nosec G404 -- mock ids, not secrets
 	}
 	return string(b)
 }
