@@ -12,6 +12,7 @@ Go-basierter Mockup von STACKIT-APIs für lokale Entwicklung und Tests (Terrafor
 - `internal/admin/`, `internal/faults/` – `/_admin/*` und Fehlerinjektion
 - `docs/api-notes.md` – verifizierte Endpunkte/Pflichtfelder/Waiter-Semantik aus SDK + Provider (vor Änderungen an Handlern lesen)
 - `docs/terraform-example/` – `main.tf` gegen den Mock
+- `docs/landing-zone/` – modulares Landing-Zone-Beispiel (PLZ: Network Area + DNS, ALZ: SKE und 3 VMs); Projekt→Area nur per Label `networkArea`
 
 ## Befehle
 - Bauen: `go build -o bin/stackit_mock ./cmd/stackit_mock`

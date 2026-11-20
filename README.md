@@ -4,15 +4,15 @@
 
 Go-Mock der STACKIT-REST-APIs, damit Terraform-Code (Provider `stackitcloud/stackit`) und das `stackit`-CLI **ohne echte Cloud und ohne Kosten** getestet werden können. Der Mock läuft zusammen mit einer TUI, die live zeigt, was „deployt“ ist.
 
-Unterstützte Services: Resource Manager, Service Account, IaaS (Netzwerke, Security Groups, Server, Volumes, Public IPs, NICs, Key Pairs, Images, Machine Types), SKE (+ Service Enablement), PostgreSQL Flex, MongoDB Flex.
-Nicht abgedeckt: Network-Area-Routen/-Ranges, Backups/Snapshots/Clone, IaaS-Beta-Ressourcen (siehe `docs/api-notes.md`).
+Unterstützte Services: Resource Manager (Projekte, Folders), Service Account, IaaS (Netzwerke, Network Areas inkl. Ranges/Routes, Affinity Groups, Security Groups, Server, Volumes, Public IPs, NICs, Key Pairs, Images, Machine Types), SKE (+ Service Enablement), PostgreSQL Flex, MongoDB Flex, DNS (Zonen, Record Sets).
+Nicht abgedeckt: Routing Tables, Backups/Snapshots/Clone, IaaS-Beta-Ressourcen (siehe `docs/api-notes.md`).
 
 ## Wie es funktioniert
 
 ```
 Terraform / stackit-CLI ──HTTP──▶ stackit_mock (:9001) ──▶ In-Memory-Store ◀── TUI (Admin-API)
                                    │   /iaas /ske /resourcemanager /serviceaccount
-                                   │   /postgresflex /mongodbflex /serviceenablement /token
+                                   │   /postgresflex /mongodbflex /dns /serviceenablement /token
                                    └── /_admin/* (Ressourcen, Events, Reset, Fehlerinjektion)
 ```
 
@@ -113,6 +113,10 @@ Das Token `mock-token` wird vom Provider als deprecated gemeldet (Warnung), funk
 **Dauer:** Der Mock antwortet sofort; die Wartezeit sind feste Sleeps im Provider. `apply` ≈ 77 s (Projekt 60 s, Postgres 15 s, Service Enablement 15 s, MongoDB 5 s, Service Account 5 s), `destroy` ≈ 30 s (MongoDB-Löschen 30 s). Wer Zeit sparen will, nutzt eine feste Projekt-UUID als `project_id` statt `stackit_resourcemanager_project` – der Mock akzeptiert beliebige Projekt-IDs.
 
 Der Mock-State ist im Speicher: Nach einem Mock-Neustart ohne `-snapshot` passt der Terraform-State nicht mehr; dann `*.tfstate*` löschen.
+
+## Landing-Zone-Beispiel
+
+`docs/landing-zone/` zeigt eine praxisnahe STACKIT Landing Zone mit Terraform-Modulen: Platform Landing Zone (Network Area + managed DNS), eine Application Landing Zone mit SKE-Cluster und eine mit drei VMs im eigenen Netz (Basis für einen selbst betriebenen Cluster). Architektur, Befehle und Grenzen: [docs/landing-zone/README.md](docs/landing-zone/README.md). Gegen den Mock: `apply` ≈ 90 s (35 Ressourcen), `destroy` wenige Sekunden.
 
 ## stackit-CLI gegen den Mock
 

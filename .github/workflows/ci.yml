@@ -26,6 +26,20 @@ jobs:
       - run: go build ./...
       - run: go test -race ./...
 
+  terraform:
+    name: Terraform examples (fmt, validate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive docs
+      - name: validate
+        run: |
+          for d in docs/terraform-example docs/landing-zone; do
+            terraform -chdir="$d" init -backend=false -input=false
+            terraform -chdir="$d" validate
+          done
+
   security:
     name: Security (govulncheck, gosec)
     runs-on: ubuntu-latest
