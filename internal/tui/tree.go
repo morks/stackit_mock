@@ -22,6 +22,9 @@ func BuildRows(res []store.Resource, filter string) []Row {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	byProject := map[string]map[string][]store.Resource{}
 	for _, r := range res {
+		if r.Status == "DELETE_SUCCEEDED" { // tombstones (e.g. DNS) are gone from the user's view
+			continue
+		}
 		if filter != "" && !strings.Contains(strings.ToLower(r.Type+" "+r.Name+" "+r.ID+" "+r.Status), filter) {
 			continue
 		}

@@ -12,12 +12,16 @@ import (
 	"github.com/morks/stackit_mock/internal/store"
 )
 
-const typ = "resourcemanager/project"
+const (
+	typ       = "resourcemanager/project"
+	folderTyp = "resourcemanager/folder"
+)
 
 var nameRe = regexp.MustCompile(`^[a-zA-ZäüöÄÜÖ0-9]( ?[a-zA-ZäüöÄÜÖß0-9_+&-]){1,40}$`)
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 func Register(mux *http.ServeMux, d *httpx.Deps) {
+	registerFolders(mux, d)
 	// find resolves a project by UUID or containerId.
 	find := func(id string) (store.Resource, bool) {
 		if r, ok := d.Store.Get(typ, id, id); ok {
@@ -55,6 +59,7 @@ func Register(mux *http.ServeMux, d *httpx.Deps) {
 			httpx.ErrStackit(w, r, 400, "containerParentId is required")
 			return
 		}
+		_, parent = resolveParent(d, parent)
 		for _, p := range d.Store.List(store.Filter{Type: typ}) {
 			if p.Name == name && p.Data["_parent"] == parent {
 				httpx.ErrStackit(w, r, 409, "project with name "+name+" already exists")
@@ -63,14 +68,14 @@ func Register(mux *http.ServeMux, d *httpx.Deps) {
 		}
 		id := httpx.UUID()
 		ts := time.Now().UTC().Format(time.RFC3339)
-		ptype := "FOLDER"
-		if looksUUID(parent) {
-			ptype = "ORGANIZATION"
+		parentRef, parentKey := resolveParent(d, parent)
+		if parentKey != parent {
+			parent = parentKey
 		}
 		data := map[string]any{
 			"projectId": id, "containerId": strings.Trim(slugRe.ReplaceAllString(strings.ToLower(name), "-"), "-") + "-" + crud.Rand(6),
 			"name": name, "creationTime": ts, "updateTime": ts, "_parent": parent,
-			"parent": map[string]any{"containerId": parent, "id": parent, "type": ptype},
+			"parent": parentRef,
 		}
 		if l := crud.Map(b["labels"]); l != nil {
 			data["labels"] = l
@@ -134,6 +139,21 @@ func Register(mux *http.ServeMux, d *httpx.Deps) {
 		d.Engine.Delete(typ, p.Project, p.ID, "DELETING")
 		w.WriteHeader(http.StatusAccepted)
 	})
+}
+
+// resolveParent returns the parent reference for a project/folder and the
+// normalized parent key (the folder's containerId, or id unchanged). Unknown
+// parents are assumed to be organizations (UUID) or folders (otherwise).
+func resolveParent(d *httpx.Deps, id string) (map[string]any, string) {
+	if f, ok := findFolder(d, id); ok {
+		cid, _ := f.Data["containerId"].(string)
+		return map[string]any{"containerId": cid, "id": f.Data["folderId"], "type": "FOLDER"}, cid
+	}
+	ptype := "FOLDER"
+	if looksUUID(id) {
+		ptype = "ORGANIZATION"
+	}
+	return map[string]any{"containerId": id, "id": id, "type": ptype}, id
 }
 
 func looksUUID(s string) bool {

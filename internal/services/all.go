@@ -6,6 +6,7 @@ import (
 
 	"github.com/morks/stackit_mock/internal/httpx"
 	"github.com/morks/stackit_mock/internal/services/auth"
+	"github.com/morks/stackit_mock/internal/services/dns"
 	"github.com/morks/stackit_mock/internal/services/iaas"
 	"github.com/morks/stackit_mock/internal/services/mongodbflex"
 	"github.com/morks/stackit_mock/internal/services/postgresflex"
@@ -23,6 +24,7 @@ func All() []Registrar {
 		serviceaccount.Register,
 		iaas.Register,
 		ske.Register,
+		dns.Register,
 		postgresflex.Register,
 		mongodbflex.Register,
 	}

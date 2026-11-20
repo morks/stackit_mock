@@ -719,6 +719,7 @@ provider "stackit" {
   service_enablement_custom_endpoint = "http://localhost:8080/serviceenablement"
   postgresflex_custom_endpoint       = "http://localhost:8080/postgresflex"
   mongodbflex_custom_endpoint        = "http://localhost:8080/mongodbflex"
+  dns_custom_endpoint                = "http://localhost:8080/dns"
 }
 ```
 
@@ -736,12 +737,87 @@ Environment fallbacks: `STACKIT_SERVICE_ACCOUNT_TOKEN`, `STACKIT_SERVICE_ACCOUNT
 
 ---
 
+## 10a. DNS (`/dns`, `dns/v1api`, provider `dns_custom_endpoint = "<mock>/dns"`)
+
+Endpoints (no region), all below `/dns/v1/projects/{projectId}`:
+
+- `POST|GET /zones`, `GET|PATCH|DELETE /zones/{zoneId}`
+- `POST|GET /zones/{zoneId}/rrsets`, `GET|PATCH|DELETE /zones/{zoneId}/rrsets/{rrSetId}`
+
+Bodies and responses:
+
+- Zone create: `name*`, `dnsName*`, `type` (`primary` default, `secondary` needs `primaries`), `acl`, `contactEmail`,
+  `defaultTTL`, `description`, `isReverseZone`, `primaries`, `expireTime`, `refreshTime`, `retryTime`,
+  `negativeCache`, `labelsMap`. Responses are `{zone: {...}, message}` (create/delete 202, get/patch 200).
+  Required response fields: `id, name, dnsName, state, type, acl, visibility, primaryNameServer, defaultTTL,
+  expireTime, negativeCache, refreshTime, retryTime, serialNumber, creationStarted, creationFinished,
+  updateStarted, updateFinished`; the mock adds `active` and `recordCount`.
+- Record set create: `name*`, `type*`, `records*: [{content*}]`, `ttl` (default zone `defaultTTL`), `comment`.
+  Responses are `{rrset: {id, name, type, state, ttl, records: [{id, content}], ..., active, comment}, message}`.
+  `name` is echoed exactly as sent. PATCH replaces `records`/`ttl`/`comment` (the mock also returns the rrset).
+- Lists: `{zones|rrSets: [...], totalItems, totalPages, itemsPerPage}`; filters `nameEq`, `dnsNameEq`, `typeEq`,
+  `stateEq`; `page`, `pageSize`.
+- Errors use the generic `{code, message}` format: 400 invalid dnsName/record type/missing fields, 404 unknown or
+  deleted zone, 409 duplicate active `dnsName` per project (rrset: same name and type per zone).
+- States for zones and record sets: `CREATING -> CREATE_SUCCEEDED`, `UPDATING -> UPDATE_SUCCEEDED`,
+  `DELETING -> DELETE_SUCCEEDED`.
+
+**Tombstone delete.** The SDK delete waiter has `ActiveState = DELETE_SUCCEEDED` and treats a 404 while waiting
+as a hard error, so the object must still exist after DELETE. The provider's Read treats both 404 and
+`DELETE_SUCCEEDED` as gone. The mock therefore sets `crud.Coll.Tombstone`: DELETE moves the object to `DELETING`
+and then (via `Engine.Transition`, delay 0 = immediately) to `DELETE_SUCCEEDED`, and keeps it. Tombstones stay
+GET-able, are hidden from lists, from the TUI tree and from name uniqueness (re-creating the same `dnsName` works),
+and reject PATCH (404). Deleting a zone tombstones its record sets too. The pending transition is stored in
+`Resource.Next`, so snapshots resume it. Other collections are unaffected.
+
+Not modelled: auto-created SOA/NS record sets, `secondary` zone sync, reverse-zone validation.
+
+---
+
 ## 11. Not verified or out of scope
 
 - Real success status codes (see section 0).
 - Real error body shapes for SKE and for non-4xx codes.
 - IaaS beta resources (`iaasalpha`: VPC, VPC regions and similar, `v2alpha1api`), network-area routes and routing
-  tables, and affinity groups, backups, snapshots and the other services in the provider (DNS, load balancer,
+  tables, and affinity groups, backups, snapshots and the other services in the provider (load balancer,
   object storage and so on) are not covered.
 - Mongo/Postgres backup, restore, clone and metrics endpoints are not covered.
 - The `terraform-example` directory in `docs/` is untouched.
+
+## Landing zone additions (folders, network-area ranges/routes, project association, affinity groups)
+
+Sources: SDK `resourcemanager/v0api`, `iaas/v2api`, provider v0.123. Not re-verified against a real API; the
+SDK sources were not available locally while implementing, so response fields follow the task notes above.
+
+Resource Manager folders (`/resourcemanager/v2/folders`, store type `resourcemanager/folder`, Project = containerId):
+
+- `POST` body `{containerParentId*, name*, labels}`; `201` with `{containerId, folderId, name, parent{containerId,id,type},
+  creationTime, updateTime, labels}`. Name regex as for projects, name unique per parent (`409`).
+- `GET` list (`items`, optional `?containerParentId=`), `GET /{id}` (containerId or folderId; adds `parents[]`),
+  `PATCH` (name, labels merged), `DELETE` (`204`; `409` while projects or folders live below it, `404` afterwards).
+- The provider has no waiter (sleeps 10 s after create); no async status in the mock.
+- Projects/folders with `containerParentId` of a known folder get `parent.type = FOLDER`, `parent.id = folderId`.
+  Unknown parents keep the old heuristic (UUID = ORGANIZATION, otherwise FOLDER).
+
+Network area (prefix `/iaas`, `O = /v2/organizations/{organizationId}`):
+
+- Ranges live inside the region (`ipv4.networkRanges[{id,prefix}]`); `POST|GET O/network-areas/{a}/regions/{r}/network-ranges`
+  and `GET|DELETE .../network-ranges/{id}` read and write the same list, so the region GET reflects them. `POST` body
+  `{ipv4:[{prefix}]}` returns `201 {items:[{id,prefix}]}`; invalid prefix `400`, duplicate prefix `409`.
+  Region PUT/PATCH keep the id of an unchanged prefix, new prefixes get an id, and PUT merges `ipv4` with the stored one.
+- Routes (type `iaas/network-area-route`): `POST .../routes` body `{items:[Route]}` returns `201 {items:[Route+id]}`;
+  `GET` list, `GET|PATCH|DELETE .../routes/{routeId}` (delete `202`). Route =
+  `{id, destination{type: cidrv4|cidrv6, value}, nexthop{type: ipv4|ipv6|internet|blackhole, value}, createdAt, updatedAt}`.
+  Input `nextHop` is accepted and normalized to `nexthop`. Unknown area/region: `404`. Deleting a region or area removes its routes.
+- Project association: the provider only sets label `networkArea=<areaId>` on the RM project. `GET .../network-areas/{a}/projects`
+  returns `{items:[projectId..]}` (never null) computed from those labels; area `projectCount` is computed the same way.
+  `DELETE` of an area is `409` while projects are associated; otherwise regions, ranges and routes are removed with it.
+- `GET /iaas/v2/projects/{projectId}` (UUID or containerId): `{id, areaId (label value or "PUBLIC"), status: "CREATED",
+  createdAt, updatedAt}`, `404` if unknown. Only `status*`/`areaId*`/`id*` are assumed to be required.
+
+Affinity groups (`R/affinity-groups[/{id}]`, type `iaas/affinity-group`):
+
+- `POST {name*, policy*}` with policy one of `hard-affinity`, `soft-affinity`, `hard-anti-affinity`, `soft-anti-affinity` (`400` otherwise),
+  name unique per project (`409`); `GET` list, `GET`, `DELETE` (`409` while members exist).
+- Response `{id, name, policy, members:[serverId]}`; `members` is computed from servers whose `affinityGroup` equals the group id.
+  Server create with an unknown `affinityGroup` returns `400`.

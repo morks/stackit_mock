@@ -28,3 +28,20 @@ func TestBuildRows(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRowsHidesTombstones(t *testing.T) {
+	res := []store.Resource{
+		{Type: "dns/zone", Service: "dns", Project: "p1", ID: "z1", Name: "a.example.", Status: "CREATE_SUCCEEDED"},
+		{Type: "dns/zone", Service: "dns", Project: "p1", ID: "z2", Name: "b.example.", Status: "DELETE_SUCCEEDED"},
+	}
+	rows := BuildRows(res, "")
+	if len(rows) != 3 { // project + service + one zone
+		t.Fatalf("got %d rows, want 3", len(rows))
+	}
+	if r := rows[2].Resource; r == nil || r.ID != "z1" {
+		t.Fatalf("unexpected row %+v", rows[2])
+	}
+	if got := len(BuildRows(res[1:], "")); got != 0 {
+		t.Fatalf("only tombstones: got %d rows, want 0", got)
+	}
+}

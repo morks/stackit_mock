@@ -33,12 +33,14 @@ var netCounter atomic.Int32
 type h struct {
 	d                                                                                            *httpx.Deps
 	networks, nics, nicsGet, volumes, servers, ips, sgs, rules, keypairs, images, areas, regions *crud.Coll
+	affinity, routes                                                                             *crud.Coll
 	requests                                                                                     sync.Map // requestId -> map[string]any
 }
 
 func Register(mux *http.ServeMux, d *httpx.Deps) {
 	x := &h{d: d}
 	x.define()
+	x.defineLandingZone()
 
 	x.networks.Routes(mux, R+"/networks")
 	x.sgs.Routes(mux, R+"/security-groups")
@@ -72,13 +74,13 @@ func Register(mux *http.ServeMux, d *httpx.Deps) {
 
 	// network area regions
 	ab := O + "/network-areas/{areaId}"
-	mux.HandleFunc("GET "+ab+"/projects", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, 200, map[string]any{"items": []any{}})
-	})
+	mux.HandleFunc("GET "+ab+"/projects", x.listAreaProjects)
+	mux.HandleFunc("GET "+pre+"/v2/projects/{projectId}", x.getProjectDetails)
+	x.registerLandingZone(mux, ab)
 	mux.HandleFunc("GET "+ab+"/regions", x.listAreaRegions)
-	mux.HandleFunc("PUT "+ab+"/regions/{region}", x.regions.Upsert)
+	mux.HandleFunc("PUT "+ab+"/regions/{region}", x.putRegion(x.regions.Upsert))
 	mux.HandleFunc("GET "+ab+"/regions/{region}", x.regions.Get)
-	mux.HandleFunc("PATCH "+ab+"/regions/{region}", x.regions.Patch)
+	mux.HandleFunc("PATCH "+ab+"/regions/{region}", x.putRegion(x.regions.Patch))
 	mux.HandleFunc("DELETE "+ab+"/regions/{region}", x.regions.Delete)
 
 	// server actions and attachments
@@ -338,6 +340,7 @@ func (x *h) define() {
 			return nil
 		}}
 	x.areas.Unique = true
+	x.areas.Decorate = func(m map[string]any, res store.Resource) { m["projectCount"] = len(x.areaProjects(res.ID)) }
 
 	x.regions = &crud.Coll{D: d, Err: httpx.ErrIaaS, Type: "iaas/network-area-region", Service: "iaas",
 		Label: "network area region", IDParam: "region", KeyKey: "_region",
@@ -374,8 +377,14 @@ func (x *h) define() {
 	// regions live in the area's own scope (Project = areaId) so keys never collide.
 	x.areas.Children = nil
 	x.areas.BeforeDel = func(r *http.Request, res store.Resource) (int, string) {
-		for _, rg := range d.Store.List(store.Filter{Type: "iaas/network-area-region", Project: res.ID}) {
-			d.Store.Delete(rg.Type, rg.Project, rg.ID)
+		if n := len(x.areaProjects(res.ID)); n > 0 {
+			return 409, fmt.Sprintf("network area still has %d project(s) attached", n)
+		}
+		// cascade: regions (incl. embedded ranges) and routes live in the area's scope
+		for _, c := range d.Store.List(store.Filter{Project: res.ID}) {
+			if strings.HasPrefix(c.Type, "iaas/network-area-") {
+				d.Store.Delete(c.Type, c.Project, c.ID)
+			}
 		}
 		return 0, ""
 	}
@@ -465,6 +474,9 @@ func (x *h) prepareServer(r *http.Request, s crud.Scope, b map[string]any) error
 	}
 	if httpx.Str(b, "availabilityZone") == "" {
 		b["availabilityZone"] = s.Region + "-1"
+	}
+	if ag := httpx.Str(b, "affinityGroup"); ag != "" && !x.exists("iaas/affinity-group", s.Project, ag) {
+		return errBad("affinity group " + ag + " not found")
 	}
 	nw := crud.Map(b["networking"])
 	if nw == nil {

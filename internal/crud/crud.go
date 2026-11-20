@@ -34,11 +34,18 @@ type Coll struct {
 	Initial   string // status after create
 	Final     string // status after delay
 	Updating  string // intermediate status on update ("" = none)
+	Updated   string // status after an update completes (default Final); with Tombstone set, updates are allowed in any live state
 	Deleting  string // status while deleting ("" = immediate delete)
+	// Tombstone, if set, keeps deleted objects: DELETE moves them to Deleting
+	// and then to this status (after the delay) instead of removing them.
+	// They stay GET-able but are hidden from lists and name uniqueness.
+	Tombstone  string
+	DeleteBody bool // DELETE answers 202 with the (wrapped) object instead of an empty body
 
-	ListKey    string // default "items"
-	Wrap       string // wrap single objects: {Wrap: obj}
-	CreateCode int    // default 201
+	ListKey    string          // default "items"
+	Wrap       string          // wrap single objects: {Wrap: obj}
+	WrapFn     func(v any) any // custom wrapping of single objects (takes precedence over Wrap)
+	CreateCode int             // default 201
 
 	Prepare    func(r *http.Request, s Scope, body map[string]any) error // fills defaults; error -> 400
 	Decorate   func(m map[string]any, res store.Resource)                // adjusts the public view
@@ -98,6 +105,9 @@ func (c *Coll) View(res store.Resource) map[string]any {
 }
 
 func (c *Coll) wrap(v any) any {
+	if c.WrapFn != nil {
+		return c.WrapFn(v)
+	}
 	if c.Wrap != "" {
 		return map[string]any{c.Wrap: v}
 	}
@@ -190,8 +200,8 @@ func (c *Coll) Upsert(w http.ResponseWriter, r *http.Request) {
 				x.Data["updatedAt"] = now()
 			}
 		})
-		if c.Updating != "" && cur.Status == c.Final {
-			c.D.Engine.Transition(c.Type, s.Project, key, c.Updating, c.Final)
+		if c.Updating != "" && c.updatable(cur) {
+			c.D.Engine.Transition(c.Type, s.Project, key, c.Updating, c.updatedStatus())
 		}
 		out, _ := c.D.Store.Get(c.Type, s.Project, key)
 		httpx.WriteJSON(w, http.StatusOK, c.wrap(c.View(out)))
@@ -225,6 +235,9 @@ func (c *Coll) List(w http.ResponseWriter, r *http.Request) {
 	s := c.scope(r)
 	items := []any{}
 	for _, res := range c.D.Store.List(store.Filter{Type: c.Type, Project: s.Project, Parent: s.Parent}) {
+		if c.Hidden(res) {
+			continue
+		}
 		items = append(items, c.View(res))
 	}
 	if c.ListWrap != nil {
@@ -247,6 +260,10 @@ func (c *Coll) Patch(w http.ResponseWriter, r *http.Request) {
 		c.notFound(w, r)
 		return
 	}
+	if c.Hidden(cur) {
+		c.notFound(w, r)
+		return
+	}
 	if n, _ := body[c.nameKey()].(string); c.Unique && n != "" && n != cur.Name && c.nameTaken(cur, n) {
 		c.Err(w, r, http.StatusConflict, c.Label+" with name "+n+" already exists")
 		return
@@ -261,8 +278,8 @@ func (c *Coll) Patch(w http.ResponseWriter, r *http.Request) {
 			x.Name = n
 		}
 	})
-	if c.Updating != "" && cur.Status == c.Final {
-		out, _ = c.D.Engine.Transition(c.Type, s.Project, key, c.Updating, c.Final)
+	if c.Updating != "" && c.updatable(cur) {
+		out, _ = c.D.Engine.Transition(c.Type, s.Project, key, c.Updating, c.updatedStatus())
 	}
 	httpx.WriteJSON(w, http.StatusOK, c.wrap(c.View(out)))
 }
@@ -282,10 +299,19 @@ func (c *Coll) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if c.Hidden(res) { // already tombstoned: idempotent
+		c.deleteResp(w, res)
+		return
+	}
 	for _, ct := range c.Children {
 		for _, ch := range c.D.Store.List(store.Filter{Type: ct, Project: s.Project, Parent: key}) {
-			c.D.Store.Delete(ch.Type, ch.Project, ch.ID)
+			c.removeChild(ch)
 		}
+	}
+	if c.Tombstone != "" {
+		out, _ := c.D.Engine.Transition(c.Type, s.Project, key, c.Deleting, c.Tombstone)
+		c.deleteResp(w, out)
+		return
 	}
 	if c.Deleting == "" {
 		c.D.Store.Delete(c.Type, s.Project, key)
@@ -295,13 +321,51 @@ func (c *Coll) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+func (c *Coll) updatedStatus() string {
+	if c.Updated != "" {
+		return c.Updated
+	}
+	return c.Final
+}
+
+func (c *Coll) updatable(cur store.Resource) bool {
+	return cur.Status == c.Final || cur.Status == c.updatedStatus() || (c.Tombstone != "" && !c.Hidden(cur))
+}
+
+// Hidden reports whether res is a tombstone (deleted but still GET-able).
+func (c *Coll) Hidden(res store.Resource) bool {
+	return c.Tombstone != "" && res.Status == c.Tombstone
+}
+
+func (c *Coll) deleteResp(w http.ResponseWriter, res store.Resource) {
+	if c.DeleteBody {
+		httpx.WriteJSON(w, http.StatusAccepted, c.wrap(c.View(res)))
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// removeChild deletes a child together with its parent. With Tombstone set the
+// children are tombstoned with the parent's Deleting/Tombstone statuses
+// (children must use the same status names as their parent collection).
+func (c *Coll) removeChild(ch store.Resource) {
+	if c.Tombstone == "" {
+		c.D.Store.Delete(ch.Type, ch.Project, ch.ID)
+		return
+	}
+	if ch.Status == c.Tombstone {
+		return
+	}
+	c.D.Engine.Transition(ch.Type, ch.Project, ch.ID, c.Deleting, c.Tombstone)
+}
+
 func (c *Coll) nameTaken(res store.Resource, newName string) bool {
 	n := res.Name
 	if newName != "" {
 		n = newName
 	}
 	for _, o := range c.D.Store.List(store.Filter{Type: c.Type, Project: res.Project, Parent: res.Parent}) {
-		if o.Name == n && o.ID != res.ID {
+		if o.Name == n && o.ID != res.ID && !c.Hidden(o) {
 			return true
 		}
 	}
